@@ -150,7 +150,7 @@ _SB_HEADERS = {
 def upsert(records: list[dict]):
     if not records:
         return
-    r = requests.post(f"{SUPABASE_URL}/rest/v1/sales",
+    r = requests.post(f"{SUPABASE_URL}/rest/v1/sales?on_conflict=order_id,platform",
                       headers=_SB_HEADERS, json=records, timeout=30)
     if not r.ok:
         raise RuntimeError(f"Supabase error {r.status_code}: {r.text}")
