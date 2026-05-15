@@ -90,12 +90,13 @@ def square_records(day: date):
         return [], 0.0
 
     headers = {"Square-Version":"2023-10-20","Authorization":f"Bearer {SQUARE_TOKEN}","Content-Type":"application/json"}
-    # Original repo appends "Z" to local date strings (no timezone conversion for Square)
+    # Use Orlando timezone boundaries — same as Shopify — so each "day" means midnight→midnight EDT.
+    # Raw UTC midnight = 8 PM EDT the day before, causing early-AM transactions to land on the wrong date.
     payload = {
         "location_ids": [SQUARE_LOC],
         "query": {
             "filter": {
-                "date_time_filter": {"created_at": {"start_at": f"{day.isoformat()}T00:00:00Z", "end_at": f"{day.isoformat()}T23:59:59Z"}},
+                "date_time_filter": {"created_at": {"start_at": day_to_utc_iso(day, end=False), "end_at": day_to_utc_iso(day, end=True)}},
                 "state_filter": {"states": ["COMPLETED"]}
             }
         }
@@ -110,9 +111,9 @@ def square_records(day: date):
     for o in data.get("orders", []):
         if "total_money" not in o:
             continue
-        # total_money matches original repo (includes tax, tips, fees)
-        # Use net_amounts if available — correctly subtracts refunds
-        if "net_amounts" in o and "total_money" in o["net_amounts"]:
+        # Use net_amounts when available — correctly reflects refunds/returns.
+        # total_money is the gross original; net_amounts.total_money subtracts refunds.
+        if "net_amounts" in o and "total_money" in o.get("net_amounts", {}):
             amt = float(o["net_amounts"]["total_money"]["amount"]) / 100
         else:
             amt = float(o["total_money"]["amount"]) / 100
