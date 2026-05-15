@@ -111,7 +111,11 @@ def square_records(day: date):
         if "total_money" not in o:
             continue
         # total_money matches original repo (includes tax, tips, fees)
-        amt    = float(o["total_money"]["amount"]) / 100
+        # Use net_amounts if available — correctly subtracts refunds
+        if "net_amounts" in o and "total_money" in o["net_amounts"]:
+            amt = float(o["net_amounts"]["total_money"]["amount"]) / 100
+        else:
+            amt = float(o["total_money"]["amount"]) / 100
         total += amt
         rows.append({"order_id": o["id"], "platform": "square", "amount": round(amt,2), "currency": o["total_money"].get("currency","USD"), "sale_date": day.isoformat()})
     return rows, round(total, 2)
