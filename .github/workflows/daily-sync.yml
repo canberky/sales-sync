@@ -2,14 +2,11 @@ name: Sales Sync
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # every 10 minutes → live data sync
-    - cron: "0 12 * * *"     # once daily at 12:00 UTC = 8:00 AM EDT → Telegram report
-  workflow_dispatch:          # lets you click "Run workflow" manually in GitHub
+    - cron: "*/10 * * * *"  # every 10 minutes
+  workflow_dispatch:         # lets you click "Run workflow" manually in GitHub
 
 jobs:
   live-sync:
-    # Runs every 10 minutes — silently syncs today + yesterday, no Telegram
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/10 * * * *'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -23,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Live sync (today + yesterday)
+      - name: Sync today + yesterday
         env:
           SHOPIFY_STORE:        ${{ secrets.SHOPIFY_STORE }}
           SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
@@ -32,31 +29,3 @@ jobs:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python sync.py --live
-
-  daily-report:
-    # Runs once a day at 8 AM EDT — syncs yesterday and sends Telegram message
-    if: github.event.schedule == '0 12 * * *'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Daily report (yesterday + Telegram)
-        env:
-          SHOPIFY_STORE:        ${{ secrets.SHOPIFY_STORE }}
-          SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
-          SQUARE_ACCESS_TOKEN:  ${{ secrets.SQUARE_ACCESS_TOKEN }}
-          SQUARE_LOCATION_ID:   ${{ secrets.SQUARE_LOCATION_ID }}
-          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          TELEGRAM_BOT_TOKEN:   ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:     ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python sync.py --report
