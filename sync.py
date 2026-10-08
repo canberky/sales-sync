@@ -132,31 +132,37 @@ def square_records(day: date):
     # Orlando timezone boundaries (same as Shopify).
     # Raw UTC midnight = 8 PM EDT the day before, which shifts early-morning
     # transactions to the wrong date.
+    start_at = day_to_utc_iso(day, end=False)
+    end_at   = day_to_utc_iso(day, end=True)
     payload = {
         "location_ids": [SQUARE_LOC],
+        "limit": 500,
         "query": {
             "filter": {
                 "date_time_filter": {
-                    "created_at": {
-                        "start_at": day_to_utc_iso(day, end=False),
-                        "end_at":   day_to_utc_iso(day, end=True),
-                    }
+                    "created_at": {"start_at": start_at, "end_at": end_at}
                 },
                 "state_filter": {"states": ["COMPLETED"]},
             }
         },
     }
-    r = requests.post(
-        "https://connect.squareup.com/v2/orders/search",
-        headers=headers, data=json.dumps(payload), timeout=30,
-    )
-    r.raise_for_status()
-    data = r.json()
-    if "errors" in data:
-        raise RuntimeError(f"Square error: {data['errors']}")
+    orders = []
+    while True:
+        r = requests.post(
+            "https://connect.squareup.com/v2/orders/search",
+            headers=headers, data=json.dumps(payload), timeout=30,
+        )
+        r.raise_for_status()
+        data = r.json()
+        if "errors" in data:
+            raise RuntimeError(f"Square error: {data['errors']}")
+        orders += data.get("orders", [])
+        if not data.get("cursor"):
+            break
+        payload["cursor"] = data["cursor"]
 
     rows, total = [], 0.0
-    for o in data.get("orders", []):
+    for o in orders:
         if "total_money" not in o:
             continue
         # net_amounts subtracts refunds; fall back to total_money if absent
@@ -172,7 +178,61 @@ def square_records(day: date):
             "currency":  o["total_money"].get("currency", "USD"),
             "sale_date": day.isoformat(),
         })
+
+    # Invoice payments: the invoice's order is created when the invoice is
+    # made (often days before it is paid) and stays OPEN after payment, so the
+    # COMPLETED/created_at search above never sees it. Pick these up from the
+    # payments taken on this day instead, counted on the day they were paid.
+    seen  = {o["id"] for o in orders}
+    extra = {}
+    for p in square_payments(day, headers, start_at, end_at):
+        oid = p.get("order_id")
+        if not oid or oid in seen or p.get("status") != "COMPLETED":
+            continue
+        paid     = p.get("amount_money", {}).get("amount", 0)
+        refunded = p.get("refunded_money", {}).get("amount", 0)
+        cur      = p.get("amount_money", {}).get("currency", "USD")
+        prev     = extra.get(oid, (0, cur))
+        extra[oid] = (prev[0] + paid - refunded, cur)
+
+    for oid, (cents, cur) in extra.items():
+        amt = cents / 100
+        total += amt
+        rows.append({
+            "order_id":  oid,
+            "platform":  "square",
+            "amount":    round(amt, 2),
+            "currency":  cur,
+            "sale_date": day.isoformat(),
+        })
+    if extra:
+        log.info("%s  Square: %d invoice/other payment(s) added", day, len(extra))
     return rows, round(total, 2)
+
+
+def square_payments(day: date, headers: dict, start_at: str, end_at: str):
+    """All payments created on this Orlando day at our location (paginated)."""
+    params = {
+        "begin_time":  start_at,
+        "end_time":    end_at,
+        "location_id": SQUARE_LOC,
+        "limit":       100,
+    }
+    payments = []
+    while True:
+        r = requests.get(
+            "https://connect.squareup.com/v2/payments",
+            headers=headers, params=params, timeout=30,
+        )
+        r.raise_for_status()
+        data = r.json()
+        if "errors" in data:
+            raise RuntimeError(f"Square error: {data['errors']}")
+        payments += data.get("payments", [])
+        if not data.get("cursor"):
+            break
+        params["cursor"] = data["cursor"]
+    return payments
 
 
 # ── Supabase ──────────────────────────────────────────────────────────────────
